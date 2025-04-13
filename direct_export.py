@@ -277,9 +277,9 @@ class NotionExporter:
             return False
         
         # 轮询任务状态
-        max_attempts = 30
+        max_attempts = 100000000
         attempt = 0
-        wait_time = 2  # 初始等待时间(秒)
+        wait_time = 15  # 初始等待时间(秒)
         
         logger.info(f"开始轮询任务状态，最多尝试{max_attempts}次...")
         
@@ -303,8 +303,15 @@ class NotionExporter:
                     
                     if self.download_file(export_url, output_path):
                         # 下载成功后解压文件
-                        extract_dir = os.path.join(self.config.extract_dir, f"notion_export_{task_id}")
+                        extract_dir = self.config.extract_dir
                         if self.extract_zip_file(output_path, extract_dir):
+                            # 解压成功后删除ZIP文件
+                            try:
+                                os.remove(output_path)
+                                logger.info(f"已删除压缩包: {output_path}")
+                            except Exception as e:
+                                logger.warning(f"删除压缩包失败: {str(e)}")
+                                
                             logger.info("下载和解压全部完成!")
                             return True
                         else:
@@ -338,23 +345,75 @@ class NotionExporter:
         return False
 
 def main():
-    # 创建配置对象
-    config = NotionConfig(
-        token="v03%3AeyJhbGciOiJkaXIiLCJraWQiOiJwcm9kdWN0aW9uOnRva2VuLXYzOjIwMjQtMTEtMDciLCJlbmMiOiJBMjU2Q0JDLUhTNTEyIn0..Z6TJrA0B8xY2nizlT-KQIw.yomlQxqDRrFdnTfK1yBPl3XWdzuPR62pHBsuhT9W-wMfV4aTqiFHBIqMiBIQDl8nHKL5_6-H6KR0QiUMN4qH4aqQS1BUXnusZeTcmQ92OhOwlp4u-iqDDcmWldrY9mgtHDz60x8jgSGSo7gss4yoQ1WfGwrgPH-HLc4s-P4XAZe27Z1nc8ekXGMtmH5xQpd9spGQkHw5ukzuwoi4qyAYy9llnniCWRsTmUgnysoiCASewcN-Xm6YH6b6ivq2sqXJ9IOVIOHDu_mqdR5_BEPMzNPlzkYP2JoY0z6mPLk2hVlU2NYsbmESwWZllLwi4NVGWHF9FKP_qhsLb4ShXVb2d2pMHcWOBX_m5xaEWS5SE24T8iRYx0c9Pv-c2FHU6ImSHusyzMMWYfqJz8a-md24pr1w2I0VjxWh5hRMyEpYY2227Lnf-CrneNlfy0g1Rg2Q.GEnpbxVTSkEyBJtfvEdTz9ywBrAO5zZTQsGLmaoG-B8",
-        file_token="v02%3Afile_token%3ATicG4_9V4NuV5eveNIa4hcPiWLX5mt0iAKI-vE9NK-oqq8L5lP87o8m6iArIoaMMR5LcEhOO6ttYtrPmefB4_eoespwM4cRC6lTjGk_IXw6-1SB1pnZmY1rOoUO3va4OT6UYDh6sobXMEbZonFMwGeDOHjE3",
-        block_id="11d8089f-d0aa-812b-9dd7-d394127d03b0",
-        space_id="7c640ee1-6009-487c-ae07-bdf3b8fa24a0",
-        export_format="markdown",
-        output_dir="./output",
-        extract_dir="./extracted"
-    )
+    SHARED_TOKEN = "v03%3AeyJhbGciOiJkaXIiLCJraWQiOiJwcm9kdWN0aW9uOnRva2VuLXYzOjIwMjQtMTEtMDciLCJlbmMiOiJBMjU2Q0JDLUhTNTEyIn0..Z6TJrA0B8xY2nizlT-KQIw.yomlQxqDRrFdnTfK1yBPl3XWdzuPR62pHBsuhT9W-wMfV4aTqiFHBIqMiBIQDl8nHKL5_6-H6KR0QiUMN4qH4aqQS1BUXnusZeTcmQ92OhOwlp4u-iqDDcmWldrY9mgtHDz60x8jgSGSo7gss4yoQ1WfGwrgPH-HLc4s-P4XAZe27Z1nc8ekXGMtmH5xQpd9spGQkHw5ukzuwoi4qyAYy9llnniCWRsTmUgnysoiCASewcN-Xm6YH6b6ivq2sqXJ9IOVIOHDu_mqdR5_BEPMzNPlzkYP2JoY0z6mPLk2hVlU2NYsbmESwWZllLwi4NVGWHF9FKP_qhsLb4ShXVb2d2pMHcWOBX_m5xaEWS5SE24T8iRYx0c9Pv-c2FHU6ImSHusyzMMWYfqJz8a-md24pr1w2I0VjxWh5hRMyEpYY2227Lnf-CrneNlfy0g1Rg2Q.GEnpbxVTSkEyBJtfvEdTz9ywBrAO5zZTQsGLmaoG-B8"
+    SHARED_FILE_TOKEN = "v02%3Afile_token%3ATicG4_9V4NuV5eveNIa4hcPiWLX5mt0iAKI-vE9NK-oqq8L5lP87o8m6iArIoaMMR5LcEhOO6ttYtrPmefB4_eoespwM4cRC6lTjGk_IXw6-1SB1pnZmY1rOoUO3va4OT6UYDh6sobXMEbZonFMwGeDOHjE3"
+    SHARED_SPACE_ID = "7c640ee1-6009-487c-ae07-bdf3b8fa24a0"
+    SHARED_EXPORT_FORMAT = "markdown"
+    # 创建多个配置对象
+    configs = [
+        NotionConfig(
+            token=SHARED_TOKEN,
+            file_token=SHARED_FILE_TOKEN,
+            block_id="11d8089f-d0aa-819a-92fb-ce550a5bf0fe",
+            space_id=SHARED_SPACE_ID,
+            export_format=SHARED_EXPORT_FORMAT,
+            output_dir="D:\\lab\\notion_export\\信息收集",
+            extract_dir="D:\\lab\\notion_export\\信息收集"
+        ),
+        NotionConfig(
+            token=SHARED_TOKEN,
+            file_token=SHARED_FILE_TOKEN,
+            block_id="11d8089f-d0aa-81ad-bbc8-f579fb10267c", # 第三个block_id (示例)
+            space_id=SHARED_SPACE_ID,
+            export_format=SHARED_EXPORT_FORMAT, # 使用共享的 markdown 格式
+            output_dir="D:\\lab\\notion_export\\flomo",
+            extract_dir="D:\\lab\\notion_export\\flomo"
+        ),
+                NotionConfig(
+            token=SHARED_TOKEN,
+            file_token=SHARED_FILE_TOKEN,
+            block_id="11d8089f-d0aa-81c0-b77c-c845b0fb9976", # 第三个block_id (示例)
+            space_id=SHARED_SPACE_ID,
+            export_format=SHARED_EXPORT_FORMAT, # 使用共享的 markdown 格式
+            output_dir="D:\\lab\\notion_export\\\问题解决方案",
+            extract_dir="D:\\lab\\notion_export\\\问题解决方案"
+        ),
+        NotionConfig(
+            token=SHARED_TOKEN,
+            file_token=SHARED_FILE_TOKEN,
+            block_id="11d8089f-d0aa-81e1-a870-eacd76c4d9ab", # 第三个block_id (示例)
+            space_id=SHARED_SPACE_ID,
+            export_format=SHARED_EXPORT_FORMAT, # 使用共享的 markdown 格式
+            output_dir="D:\\lab\\notion_export\\整理",
+            extract_dir="D:\\lab\\notion_export\\整理"
+        )
+    ]
     
-    # 创建导出器并执行导出
-    exporter = NotionExporter(config)
-    result = exporter.export_and_download()
-    
-    # 返回适当的退出码
-    sys.exit(0 if result else 1)
+    for config in configs:
+        logger.info(f"开始处理 Block ID: {config.block_id} 的导出任务")
+        # 创建导出器并执行导出
+        exporter = NotionExporter(config)
+        result = exporter.export_and_download()
+        if result:
+            logger.info(f"Block ID: {config.block_id} 导出成功")
+        else:
+            logger.error(f"Block ID: {config.block_id} 导出失败")
+        # 可选：在两次导出之间添加延时
+        time.sleep(5) # 例如，暂停5秒
+
+def run_with_interval():
+    """每隔30分钟执行一次main函数，形成无限循环"""
+    try:
+        while True:
+            logger.info("开始执行导出任务...")
+            main()
+            logger.info("本轮导出任务完成，暂停30分钟后再次执行")
+            time.sleep(1800)  # 暂停30分钟 (30*60=1800秒)
+    except KeyboardInterrupt:
+        logger.info("程序被用户中断")
+    except Exception as e:
+        logger.error(f"发生错误: {str(e)}")
+        raise
 
 if __name__ == "__main__":
-    main() 
+    run_with_interval()
