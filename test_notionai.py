@@ -3,6 +3,7 @@ import json
 import streamlit as st # 导入 streamlit
 import uuid # 导入 uuid 库
 from collections import Counter
+import time
 
 # API URL
 url = "https://www.notion.so/api/v3/runAssistantV2"
@@ -76,29 +77,80 @@ BASE_DATA = {
     "useMarkdown": True # 注意这里是 False，如果希望返回 Markdown 可以改成 True
 }
 
+# --- 样式设置 ---
+# 移除复杂的CSS样式，只保留基本的消息样式
+st.markdown("""
+<style>
+.user-message {
+    background-color: #e6f7ff;
+    border-radius: 15px;
+    padding: 10px 15px;
+    margin: 5px 0;
+    text-align: right;
+    margin-left: 20%;
+}
+.assistant-message {
+    background-color: #f0f0f0;
+    border-radius: 15px;
+    padding: 10px 15px;
+    margin: 5px 0;
+    text-align: left;
+    margin-right: 20%;
+}
+.message-header {
+    margin-bottom: 5px;
+}
+.role-badge {
+    font-size: 0.8em;
+    padding: 2px 8px;
+    border-radius: 10px;
+    display: inline-block;
+}
+.user-badge {
+    background-color: #1890ff;
+    color: white;
+}
+.assistant-badge {
+    background-color: #52c41a;
+    color: white;
+}
+.message-time {
+    font-size: 0.7em;
+    color: #888;
+    margin-top: 5px;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # --- Session State 初始化 ---
 # 检查 session_id 是否已存在，如果不存在则创建一个新的
 if 'session_id' not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
     st.session_state.conversation_history = []  # 初始化对话历史
     st.session_state.raw_responses = []  # 存储原始响应
+    st.session_state.messages = []  # 用于存储格式化消息
+    st.session_state.thinking = False
     # 可以在这里添加一个标记，表示是新会话开始，用于可能的清理操作
     # st.session_state.new_conversation = True
 elif 'conversation_history' not in st.session_state:
     st.session_state.conversation_history = []  # 确保对话历史存在
 if 'raw_responses' not in st.session_state:
     st.session_state.raw_responses = []  # 确保原始响应存储存在
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+if 'thinking' not in st.session_state:
+    st.session_state.thinking = False
 
 # --- API 调用函数 ---
-def call_notion_ai(user_query: str, session_id: str, conversation_history=None): # 增加 conversation_history 参数
+def call_notion_ai(user_query: str, session_id: str, conversation_history=None, search_scope="notion"):
     """调用 Notion AI API 并处理响应"""
-    data = BASE_DATA.copy() # 复制基础数据结构
+    data = BASE_DATA.copy()
     
-    # 如果有对话历史，则使用完整的历史记录
+    # 更新搜索范围
+    data["searchScope"]["type"] = search_scope
+    
     if conversation_history:
-        # 先保留原始的context条目
         context_entry = data["transcript"][0]
-        # 然后用历史记录替换transcript
         data["transcript"] = [context_entry] + conversation_history
     
     # 更新 transcript 加入当前用户输入
@@ -172,251 +224,258 @@ def call_notion_ai(user_query: str, session_id: str, conversation_history=None):
         st.sidebar.text(f"未知错误: {str(e)}")
         return None
 
-# --- Streamlit 应用界面 ---
-st.title("Notion AI 助手")
-
-# 显示当前的 Session ID
-st.sidebar.write(f"当前 Session ID: {st.session_state.session_id}")
-
-# 添加会话管理功能
-st.sidebar.subheader("会话管理")
-if st.sidebar.button("开始新会话"):
-    st.session_state.session_id = str(uuid.uuid4())
-    st.session_state.conversation_history = []
-    st.session_state.raw_responses = []
-    st.sidebar.success(f"已创建新会话，ID: {st.session_state.session_id}")
-
-# 显示历史对话长度
-if 'conversation_history' in st.session_state:
-    st.sidebar.text(f"当前对话轮次: {len(st.session_state.conversation_history) // 2}")
+# --- 处理API响应函数 ---
+def process_api_response(api_responses):
+    """处理API响应并提取助手回复"""
+    assistant_response = ""
+    search_results_md = ""
     
-    # 添加选项，查看历史对话
-    if st.sidebar.checkbox("显示对话历史"):
-        for i, entry in enumerate(st.session_state.conversation_history):
-            role = "用户" if entry.get("type") == "human" else "AI助手"
-            st.sidebar.text(f"{role}: {entry.get('value', '')[:50]}..." if len(entry.get('value', '')) > 50 else f"{role}: {entry.get('value', '')}")
-            if i < len(st.session_state.conversation_history) - 1 and i % 2 == 0:
-                st.sidebar.text("---")
-
-# 添加API测试按钮
-st.sidebar.subheader("调试工具")
-if st.sidebar.button("测试API连接"):
-    test_data = {
-        "version": 1,
-        "state": BASE_DATA["state"],
-        "transcript": BASE_DATA["transcript"],
-        "spaceId": BASE_DATA["spaceId"],
-        "analytics": {
-            "sessionId": st.session_state.session_id,
-            "assistantSurface": "fullPage",
-            "openedFrom": "sidebar"
-        },
-        "searchScope": {"type": "notion"},
-        "userTimeZone": "Asia/Shanghai",
-        "useUncited": True,
-        "useLangXmlTag": True,
-        "useMarkdown": True
-    }
-    test_data["transcript"].append({
-        "type": "human",
-        "value": "Hello"  # 简单的测试消息
-    })
+    # 处理状态标记
+    is_searching = False
+    has_search_results = False
     
-    try:
-        st.sidebar.text("正在测试API连接...")
-        test_response = requests.post(
-            url, 
-            headers=HEADERS, 
-            cookies=COOKIES, 
-            json=test_data,
-            timeout=10  # 设置10秒超时
-        )
-        
-        if test_response.status_code == 200:
-            st.sidebar.success(f"API连接成功! 状态码: {test_response.status_code}")
-            # 显示响应头信息
-            st.sidebar.text("响应头信息:")
-            for key, value in test_response.headers.items():
-                if key.lower() in ['content-type', 'server', 'date']:
-                    st.sidebar.text(f"{key}: {value}")
-            
-            # 尝试解析一小部分响应内容
-            try:
-                content_preview = test_response.text[:200] if test_response.text else "无内容"
-                st.sidebar.text(f"响应内容预览: {content_preview}")
-            except:
-                st.sidebar.text("无法显示响应内容")
-        else:
-            st.sidebar.error(f"API连接失败! 状态码: {test_response.status_code}")
-            st.sidebar.text(f"错误信息: {test_response.text[:200]}")
-    except Exception as e:
-        st.sidebar.error(f"连接测试出错: {e}")
-
-# 查看原始响应功能
-if 'raw_responses' in st.session_state and len(st.session_state.raw_responses) > 0:
-    st.sidebar.subheader("查看原始响应")
-    response_index = st.sidebar.selectbox(
-        "选择要查看的响应", 
-        range(len(st.session_state.raw_responses)),
-        format_func=lambda i: f"响应 {i+1}: {st.session_state.raw_responses[i]['query'][:20]}..."
-    )
+    # 检查搜索状态
+    for data in api_responses:
+        response_type = data.get("type")
+        if response_type == "search" and not is_searching:
+            is_searching = True
+        elif response_type == "search_results" and not has_search_results:
+            has_search_results = True
     
-    if st.sidebar.button("显示所选响应的详细信息"):
-        selected_response = st.session_state.raw_responses[response_index]
-        st.sidebar.text(f"查询: {selected_response['query']}")
-        
-        # 创建一个可展开区域显示解析后的类型
-        if 'parsed' in selected_response and selected_response['parsed']:
-            parsed_types = [item.get('type', 'unknown') for item in selected_response['parsed']]
-            type_counts = Counter(parsed_types)
-            st.sidebar.text(f"响应类型: {dict(type_counts)}")
-            
-            # 显示partial_assistant_step的内容
-            partial_steps = [
-                item.get('value', '') 
-                for item in selected_response['parsed'] 
-                if item.get('type') == 'partial_assistant_step'
-            ]
-            if partial_steps:
-                combined = ''.join(partial_steps)
-                st.sidebar.text(f"流式回复内容 (长度: {len(combined)})")
-                if len(combined) > 100:
-                    st.sidebar.text(f"{combined[:100]}...")
-                else:
-                    st.sidebar.text(combined)
+    # 处理流式响应片段
+    partial_responses = []
+    for data in api_responses:
+        if data.get("type") == "partial_assistant_step":
+            value = data.get("value", "")
+            if value:
+                partial_responses.append(value)
+    
+    # 如果有流式响应片段，合并它们
+    if partial_responses:
+        combined_partial = "".join(partial_responses)
+        st.sidebar.text(f"合并流式响应片段，长度: {len(combined_partial)}")
+        assistant_response = combined_partial
+    
+    # 处理其他响应类型
+    for data in api_responses:
+        response_type = data.get("type")
 
-# 添加更多调试信息显示
-st.sidebar.subheader("认证信息")
-if st.sidebar.checkbox("显示API凭证信息"):
-    st.sidebar.text("API凭证信息（部分隐藏）:")
-    token = COOKIES.get("token_v2", "")
-    # 只显示token的前10个和后10个字符
-    masked_token = f"{token[:10]}...{token[-10:]}" if len(token) > 20 else token
-    st.sidebar.text(f"token_v2: {masked_token}")
-    st.sidebar.text(f"space_id: {BASE_DATA['spaceId']}")
-    st.sidebar.text(f"person_id: {BASE_DATA['state']['context']['current-person-id']}")
-
-# 用户输入
-user_input = st.text_input("请输入你的问题：", key="user_query")
-
-# 提交按钮
-if st.button("提问"):
-    if user_input:
-        # 创建状态显示的placeholder
-        status_placeholder = st.empty()
-        status_placeholder.info("正在思考中...")
-        
-        # 从 session_state 获取 session_id 和对话历史并传递给 API 调用函数
-        api_responses = call_notion_ai(
-            user_input, 
-            st.session_state.session_id,
-            st.session_state.conversation_history
-        )
-
-        if api_responses:
-            st.subheader("AI 回复：")
-            assistant_response = ""
-            search_results_md = ""
+        if response_type == "search_results":
+            value = data.get("value", {})
+            results = value.get("results", [])
             
-            # 创建动态内容显示的placeholder
-            response_placeholder = st.empty()
-            
-            # 定义搜索状态标记
-            is_searching = False
-            has_search_results = False
-            
-            # 处理响应类型检测搜索状态
-            for data in api_responses:
-                response_type = data.get("type")
+            if results:
+                # 检查结果中是否包含path字段
+                has_path = any("path" in result for result in results)
                 
-                # 检测到搜索相关响应类型时更新状态
-                if response_type == "search" and not is_searching:
-                    is_searching = True
-                    status_placeholder.info("正在检索知识库...")
+                search_results_md += "**相关搜索结果:**\n\n"
                 
-                # 检测到搜索结果时更新状态
-                elif response_type == "search_results" and not has_search_results:
-                    has_search_results = True
-                    status_placeholder.info("找到相关搜索结果，正在生成回答...")
-            
-            # 单独处理所有partial_assistant_step，这是流式响应的关键
-            partial_responses = []
-            for data in api_responses:
-                if data.get("type") == "partial_assistant_step":
-                    value = data.get("value", "")
-                    if value:
-                        partial_responses.append(value)
-                        # 当开始有回答内容时更新状态
-                        if len(partial_responses) == 1:
-                            status_placeholder.success("已开始生成回答")
-            
-            # 如果有流式响应片段，先合并它们
-            if partial_responses:
-                combined_partial = "".join(partial_responses)
-                st.sidebar.text(f"合并流式响应片段，长度: {len(combined_partial)}")
-                assistant_response = combined_partial
-            
-            # 调试信息：显示所有响应类型及其出现次数
-            response_types = [data.get("type") for data in api_responses]
-            type_counts = Counter(response_types)
-            st.sidebar.text(f"响应类型计数: {dict(type_counts)}")
-
-            # 如果从流式响应中已获取了内容，不需要再处理其他类型
-            # 但仍然处理search_results和错误信息
-            for data in api_responses:
-                response_type = data.get("type")
-
-                if response_type == "search":
-                    # 记录到调试区域
-                    st.sidebar.text(f"搜索查询: {data.get('value')}")
-
-                elif response_type == "search_results":
-                    value = data.get("value", {})
-                    results = value.get("results", [])
-                    if results:
-                        search_results_md += "**相关搜索结果:**\n\n"
-                        for result in results:
+                if has_path:
+                    # 按path分组
+                    grouped_results = {}
+                    for result in results:
+                        path = result.get('path', '未知路径')
+                        if path not in grouped_results:
+                            grouped_results[path] = []
+                        grouped_results[path].append(result)
+                    
+                    # 按分组显示结果，使用小字体格式
+                    for path, path_results in grouped_results.items():
+                        # 使用h3标签，但是格式更轻量
+                        search_results_md += f"### `{path}`\n\n"
+                        for result in path_results:
                             title = result.get('title', '无标题')
-                            path = result.get('path', '')
                             page_id = result.get('id', '')
                             score = result.get('score', 0)
-                            # 构建 Notion 页面链接
                             notion_link = f"https://www.notion.so/{page_id.replace('-', '')}" if page_id else "#"
                             search_results_md += f"- [{title}]({notion_link}) (相关度: {score:.2f})\n"
                         search_results_md += "\n"
+                else:
+                    # 原来的显示方式
+                    for result in results:
+                        title = result.get('title', '无标题')
+                        page_id = result.get('id', '')
+                        score = result.get('score', 0)
+                        notion_link = f"https://www.notion.so/{page_id.replace('-', '')}" if page_id else "#"
+                        search_results_md += f"- [{title}]({notion_link}) (相关度: {score:.2f})\n"
+                    search_results_md += "\n"
 
-                # 如果没有从流式响应获取内容，则尝试从其他类型获取
-                elif len(assistant_response) == 0:
-                    # 完整助手回复
-                    if response_type == "assistant_step" and data.get("namespace") == "chat":
-                        value = data.get("value", "")
-                        if value:
-                            assistant_response = value
-                            st.sidebar.text(f"获取完整回复，长度: {len(value)}")
-                            status_placeholder.success("回答生成完成")
-                    
-                    # 其他可能类型
-                    elif response_type in ["assistant", "message"]:
-                        value = data.get("value", "")
-                        if value:
-                            assistant_response = value
-                            st.sidebar.text(f"从{response_type}获取回复，长度: {len(value)}")
-                            status_placeholder.success("回答生成完成")
+        # 如果没有从流式响应获取内容，尝试从其他类型获取
+        elif len(assistant_response) == 0:
+            if response_type == "assistant_step" and data.get("namespace") == "chat":
+                value = data.get("value", "")
+                if value:
+                    assistant_response = value
+            
+            elif response_type in ["assistant", "message"]:
+                value = data.get("value", "")
+                if value:
+                    assistant_response = value
 
-                # 始终处理错误消息
-                elif response_type == "error":
-                    error_msg = data.get("value")
-                    st.warning(error_msg)
-                    st.sidebar.text(f"错误: {error_msg[:50]}..." if len(error_msg) > 50 else error_msg)
-                    status_placeholder.error("处理出错")
+    # 添加搜索结果（如果有）
+    if search_results_md and assistant_response:
+        assistant_response += "\n\n---\n\n" + search_results_md
+    
+    return assistant_response or "抱歉，我无法生成回答。请重试或换一个问题。"
 
-            # 显示最终拼接的助手回复
-            if assistant_response:
-                # 清除状态提示
-                status_placeholder.empty()
-                # 显示回答
-                st.markdown(assistant_response)
-                st.sidebar.text(f"助手回复总长度: {len(assistant_response)}")
+# --- 展示聊天记录的函数 ---
+def display_chat():
+    """展示聊天历史记录"""
+    if not st.session_state.messages:
+        st.info("开始新的对话吧！")
+        return
+    
+    for message in st.session_state.messages:
+        if message["role"] == "user":
+            st.markdown(f"""
+            <div class="user-message">
+                <div class="message-header">
+                    <span class="role-badge user-badge">👤 用户</span>
+                </div>
+                <div class="message-content">{message["content"]}</div>
+                <div class="message-time">{message["time"]}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div class="assistant-message">
+                <div class="message-header">
+                    <span class="role-badge assistant-badge">🤖 AI助手</span>
+                </div>
+                <div class="message-content">{message["content"]}</div>
+                <div class="message-time">{message["time"]}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+# --- 主界面 ---
+# 使用两列布局，将聊天历史和输入区域分开
+st.title("Notion AI 聊天助手")
+
+# 使用Streamlit内置的边栏功能提供操作按钮
+with st.sidebar:
+    st.subheader("会话管理")
+    if st.button("开始新会话"):
+        st.session_state.session_id = str(uuid.uuid4())
+        st.session_state.conversation_history = []
+        st.session_state.raw_responses = []
+        st.session_state.messages = []
+        st.session_state.thinking = False
+        st.success(f"已创建新会话，ID: {st.session_state.session_id}")
+    
+    st.text(f"当前 Session ID: {st.session_state.session_id}")
+    st.text(f"当前对话轮次: {len(st.session_state.conversation_history) // 2}")
+
+# 使用tabs分离聊天区域和设置区域
+tab1, tab2 = st.tabs(["聊天", "设置"])
+
+with tab1:
+    # 聊天区域
+    chat_container = st.container()
+    with chat_container:
+        display_chat()
+        
+        if st.session_state.thinking:
+            st.markdown("""
+            <div class="assistant-message" style="background-color: #f9f9f9;">
+                <div class="message-header">
+                    <span class="role-badge assistant-badge">🤖 AI助手</span>
+                </div>
+                <div class="message-content">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <div class="typing-indicator">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+                        思考中...
+                    </div>
+                </div>
+            </div>
+            <style>
+            .typing-indicator {
+                display: inline-flex;
+                align-items: center;
+            }
+            .typing-indicator span {
+                height: 8px;
+                width: 8px;
+                margin: 0 1px;
+                background-color: #10a37f;
+                border-radius: 50%;
+                display: inline-block;
+                opacity: 0.4;
+                animation: typing 1.5s infinite ease-in-out;
+            }
+            .typing-indicator span:nth-child(1) { animation-delay: 0s; }
+            .typing-indicator span:nth-child(2) { animation-delay: 0.3s; }
+            .typing-indicator span:nth-child(3) { animation-delay: 0.6s; }
+            @keyframes typing {
+                0%, 100% { opacity: 0.4; transform: scale(1); }
+                50% { opacity: 1; transform: scale(1.1); }
+            }
+            </style>
+            """, unsafe_allow_html=True)
+    
+    # 为提问区域创建一个分隔线
+    st.markdown("---")
+    
+    # 提问区域
+    search_scope_type = st.radio(
+        "搜索范围:",
+        ["notion", "ai-knowledge"],
+        horizontal=True,
+        index=0
+    )
+    
+    user_input = st.text_area(
+        "输入问题:",
+        height=80,
+        placeholder="输入你的问题..."
+    )
+    
+    send_col1, send_col2, send_col3 = st.columns([3, 2, 3])
+    with send_col2:
+        send_button = st.button("发送", use_container_width=True)
+
+with tab2:
+    st.subheader("设置")
+    st.write("此处可添加其他设置选项")
+
+# 处理用户输入
+if send_button and user_input:
+    # 添加用户消息到聊天记录
+    current_time = time.strftime("%H:%M:%S")
+    st.session_state.messages.append({
+        "role": "user",
+        "content": user_input,
+        "time": current_time
+    })
+    
+    # 清空输入框
+    st.session_state.user_query = ""
+    
+    # 设置思考状态
+    st.session_state.thinking = True
+    st.rerun()
+
+# 如果处于思考状态，处理API调用
+if st.session_state.thinking:
+    # 获取最近的用户输入
+    if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+        user_input = st.session_state.messages[-1]["content"]
+        
+        # 调用API
+        with st.spinner("正在生成回答..."):
+            api_responses = call_notion_ai(
+                user_input, 
+                st.session_state.session_id,
+                st.session_state.conversation_history,
+                search_scope=search_scope_type
+            )
+            
+            # 处理API响应
+            if api_responses:
+                assistant_response = process_api_response(api_responses)
                 
                 # 更新对话历史
                 st.session_state.conversation_history.append({
@@ -427,25 +486,26 @@ if st.button("提问"):
                     "type": "assistant",
                     "value": assistant_response
                 })
-            else:
-                status_placeholder.warning("未获取到回答")
-                # 调试：显示部分原始响应数据
-                if api_responses:
-                    st.sidebar.text("未找到可用的回复内容，显示部分原始数据：")
-                    for i, resp in enumerate(api_responses[:3]):  # 只显示前3条
-                        st.sidebar.text(f"响应 {i+1}: {str(resp)[:100]}...")
                 
-                # 如果没有 assistant_step，检查是否有其他类型的有效回复
-                if not search_results_md and all(r.get('type') not in ['search', 'search_results'] for r in api_responses if r.get('type') != 'error'):
-                    st.warning("未能从 Notion AI 获取有效回复。")
-                    st.sidebar.text("未找到任何有效的助手回复")
-
-            # 显示搜索结果（如果有）
-            if search_results_md:
-                 st.markdown("---") # 分隔线
-                 st.markdown(search_results_md)
-    else:
-        st.warning("请输入问题后再提问。")
+                # 添加助手消息到聊天记录
+                current_time = time.strftime("%H:%M:%S")
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": assistant_response,
+                    "time": current_time
+                })
+            else:
+                # 处理API调用失败
+                current_time = time.strftime("%H:%M:%S")
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": "抱歉，API调用失败。请检查网络连接或稍后再试。",
+                    "time": current_time
+                })
+        
+        # 重置思考状态
+        st.session_state.thinking = False
+        st.rerun()
 
 # --- 如何运行 ---
 st.sidebar.info("""
