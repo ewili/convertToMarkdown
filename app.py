@@ -146,19 +146,6 @@ def get_notion_ai_response(user_query: str):
 
 # Streamlit 应用界面
 st.title("Notion AI Streamlit 应用")
-
-# # 从用户处获取敏感信息 (更安全的方式)
-# token_v2 = st.text_input("请输入你的 Notion token_v2", type="password")
-# # space_id = st.text_input("请输入你的 Notion space_id") # 如果需要的话
-# # active_user_header = st.text_input("请输入你的 x-notion-active-user-header") # 如果需要的话
-
-# # if token_v2: # 不再需要检查 token 输入
-#     # 更新 cookies - 已在顶部硬编码
-#     # cookies["token_v2"] = token_v2
-#     # 如果需要，更新 headers
-#     # if space_id: headers["x-notion-space-id"] = space_id
-#     # if active_user_header: headers["x-notion-active-user-header"] = active_user_header
-
 user_input = st.text_area("请输入你的问题：")
 
 if st.button("发送请求"):
@@ -176,7 +163,3 @@ if st.button("发送请求"):
             st.markdown(search_results)
     else:
         st.warning("请输入问题！")
-# else: # 不再需要这个 else 分支
-#     st.warning("请输入 Notion token_v2 以继续。")
-
-# st.info("提示：你的 Notion token_v2 不会被存储，仅用于本次会话。") # 这条信息也不再需要 
