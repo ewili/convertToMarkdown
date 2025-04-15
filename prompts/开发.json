@@ -1,0 +1,14 @@
+{
+  "32aeb010-f842-44fa-a2b9-aaeea204b1a0": {
+    "id": "32aeb010-f842-44fa-a2b9-aaeea204b1a0",
+    "name": "解释代码",
+    "category": "开发",
+    "content": "请解释下面的代码是做什么的：\n\n```\n{代码}\n```",
+    "variables": [
+      "代码"
+    ],
+    "is_favorite": false,
+    "create_time": "2025-04-15T14:33:47.962683",
+    "update_time": "2025-04-15T14:33:47.962683"
+  }
+}

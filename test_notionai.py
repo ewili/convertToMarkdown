@@ -1,4 +1,3 @@
-import requests
 import json
 import streamlit as st # 导入 streamlit
 import uuid # 导入 uuid 库

@@ -1,0 +1,15 @@
+{
+  "447277dc-f0e1-4867-aa9a-514acadbb08b": {
+    "id": "447277dc-f0e1-4867-aa9a-514acadbb08b",
+    "name": "写邮件",
+    "category": "写作",
+    "content": "请帮我写一封关于{主题}的邮件给{收件人}",
+    "variables": [
+      "主题",
+      "收件人"
+    ],
+    "is_favorite": false,
+    "create_time": "2025-04-15T14:33:47.962686",
+    "update_time": "2025-04-15T14:33:47.962686"
+  }
+}
