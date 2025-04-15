@@ -22,13 +22,14 @@ cookies = {
 
 
 # 封装 Notion AI 请求逻辑
-def get_notion_ai_response(user_query: str, session_id: str):
+def get_notion_ai_response(user_query: str, session_id: str, history: list):
     """
     向 Notion AI API 发送请求并处理响应。
 
     Args:
         user_query: 用户输入的问题。
         session_id: 当前会话的 ID。
+        history: 包含历史交互记录的列表。
 
     Returns:
         一个包含助手回复和原始搜索结果列表（如果有）的元组 (assistant_response, search_results_list)。
@@ -37,6 +38,48 @@ def get_notion_ai_response(user_query: str, session_id: str):
     # --- 测试：硬编码查询以匹配 notionai.py (注释掉) ---
     # hardcoded_query = "如何使用xtdata判断一只股票是否涨停"
     # -----------------------------------------
+
+    # 构建 transcript，先添加 context
+    transcript = [
+        {
+            "type": "context",
+            "context": {
+                "mode": "direct",
+                "available-commands": [
+                    "load-database", "load-page", "load", "query-database", "search",
+                    "chat", "search-databases", "load-slack",
+                ],
+                "current-page-name": "",
+                "current-person-name": "ewili",
+                "current-space-name": "V40/2",
+                "current-person-id": "e63761a2-52de-4e41-af11-64e08edb8797"
+            }
+        }
+    ]
+
+    # 添加历史对话到 transcript
+    for interaction in history:
+        if "user" in interaction:
+            transcript.append({
+                "type": "human",
+                "value": interaction["user"]
+            })
+        if "assistant" in interaction:
+             # 检查 assistant 回复是否为空，非空才添加
+            if interaction["assistant"]:
+                transcript.append({
+                    "type": "assistant_step",
+                    "namespace": "chat_markdown",
+                    "value": interaction["assistant"]
+                })
+        # 注意：这里暂时不添加错误信息到 transcript
+
+    # 添加当前用户输入到 transcript
+    transcript.append({
+        "type": "human",
+        "value": user_query
+    })
+
 
     # 请求数据 (基于 notionai.py 修改)
     data = {
@@ -65,27 +108,8 @@ def get_notion_ai_response(user_query: str, session_id: str):
             "loadedDatabaseIds": [],
             "loadedAttachmentIds": []
         },
-        "transcript": [
-            {
-                "type": "context",
-                "context": {
-                    "mode": "direct",
-                    "available-commands": [
-                        "load-database", "load-page", "load", "query-database", "search",
-                        "chat", "search-databases", "load-slack",
-                    ],
-                    "current-page-name": "",
-                    "current-person-name": "ewili",
-                    "current-space-name": "V40/2",
-                    "current-person-id": "e63761a2-52de-4e41-af11-64e08edb8797" # 改回 "0"，以匹配原始 notionai.py 的工作配置
-                }
-            },
-            {
-                "type": "human",
-                "value": user_query # 恢复使用函数参数传递的 user_query
-                # "value": hardcoded_query # 注释掉硬编码的值
-            }
-        ],
+        # 使用构建好的 transcript
+        "transcript": transcript,
         "spaceId": "65492b2e-2341-40df-8dd9-40cdfd3314cf", # 替换为你自己的 spaceId
         "analytics": {
             "sessionId": session_id,
@@ -98,7 +122,7 @@ def get_notion_ai_response(user_query: str, session_id: str):
         "userTimeZone": "Asia/Shanghai",
         "useUncited": True,
         "useLangXmlTag": True,
-        "useMarkdown": True # 改回 False，以匹配原始脚本和避免潜在的 400 错误
+        "useMarkdown": True # 保持 True，以获取 Markdown 格式的回复
     }
 
     assistant_response = ""
@@ -115,8 +139,9 @@ def get_notion_ai_response(user_query: str, session_id: str):
             try:
                 parsed_line = json.loads(line)
 
+                # 仅累加 type 为 assistant_step 且 namespace 为 chat_markdown 的 value
                 if parsed_line.get("type") == "assistant_step" and parsed_line.get("namespace") == "chat_markdown":
-                    assistant_response = parsed_line.get("value")
+                    assistant_response += parsed_line.get("value", "") # 使用 += 进行累加
                 if parsed_line.get("type") == "search_results":
                     value = parsed_line.get("value", {})
                     # 将结果列表直接添加到 search_results_list
@@ -127,7 +152,7 @@ def get_notion_ai_response(user_query: str, session_id: str):
             except Exception as e:
                 st.error(f"处理行 {i+1} 时发生未知错误: {line}, 错误: {e}")
 
-        # 返回助手回复和原始搜索结果列表
+        # 返回最终累加的助手回复和原始搜索结果列表
         return assistant_response, search_results_list
 
     except requests.exceptions.RequestException as e:
@@ -174,9 +199,12 @@ if st.button("发送请求"):
         current_interaction = {"user": user_input}
 
         with st.spinner("正在向 Notion AI 发送请求..."):
-            # 使用当前 session_state 中的 sessionId 调用 API
-            # 接收原始搜索结果列表
-            assistant_response, search_results_list = get_notion_ai_response(user_input, st.session_state.sessionId)
+            # 使用当前 session_state 中的 sessionId 和 interactions 调用 API
+            assistant_response, search_results_list = get_notion_ai_response(
+                user_input,
+                st.session_state.sessionId,
+                st.session_state.interactions # 传递历史记录
+            )
 
         if assistant_response is not None:
             # 将 AI 回复添加到当前交互
