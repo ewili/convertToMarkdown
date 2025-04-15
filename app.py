@@ -95,29 +95,25 @@ def get_notion_ai_response(user_query: str):
         "userTimeZone": "Asia/Shanghai",
         "useUncited": True,
         "useLangXmlTag": True,
-        "useMarkdown": False # 改回 False，以匹配原始脚本和避免潜在的 400 错误
+        "useMarkdown": True # 改回 False，以匹配原始脚本和避免潜在的 400 错误
     }
 
-    assistant_response_parts = []
+    assistant_response = ""
     search_results_text = ""
 
     try:
         response = requests.post(url, headers=headers, cookies=cookies, json=data)
         response.raise_for_status() # 检查请求是否成功
-
         # 按行分割响应文本
-        lines = response.text.strip().split('\n') # 更常见的换行符是 '\n'
-
-        # 逐行解析 JSON
-        for line in lines:
+        lines = response.text.strip().split('\n')
+        for i, line in enumerate(lines):
             if not line: # 跳过空行
                 continue
             try:
                 parsed_line = json.loads(line)
 
-                if parsed_line.get("type") == "assistant_step" and parsed_line.get("namespace") == "chat":
-                    assistant_response_parts.append(parsed_line.get("value", ""))
-
+                if parsed_line.get("type") == "assistant_step" and parsed_line.get("namespace") == "chat_markdown":
+                    assistant_response = parsed_line.get("value")
                 if parsed_line.get("type") == "search_results":
                     value = parsed_line.get("value", {})
                     results = value.get("results", [])
@@ -129,16 +125,19 @@ def get_notion_ai_response(user_query: str):
                         search_results_text += f"- **分数:** {result.get('score', 'N/A')}\n\n"
 
             except json.JSONDecodeError as e:
-                st.warning(f"无法解析行: {line}, 错误: {e}")
+                st.warning(f"无法解析行 {i+1}: {line}, 错误: {e}")
             except Exception as e:
-                st.error(f"处理行时发生未知错误: {line}, 错误: {e}")
+                st.error(f"处理行 {i+1} 时发生未知错误: {line}, 错误: {e}")
 
-
-        full_assistant_response = "".join(assistant_response_parts)
-        return full_assistant_response, search_results_text
+        return assistant_response, search_results_text
 
     except requests.exceptions.RequestException as e:
         st.error(f"请求 Notion API 时出错: {e}")
+        # --- 调试：打印错误时的响应（如果可能）---
+        if 'response' in locals() and response is not None:
+             st.text("发生错误时的响应内容:")
+             st.text_area("Error Response Text", response.text, height=200)
+        # --- 调试结束 ---
         return None, None
     except Exception as e:
         st.error(f"处理 Notion AI 响应时发生未知错误: {e}")
@@ -174,7 +173,6 @@ if st.button("发送请求"):
             st.error("未能获取 AI 回复。")
 
         if search_results:
-            st.subheader("相关搜索:")
             st.markdown(search_results)
     else:
         st.warning("请输入问题！")

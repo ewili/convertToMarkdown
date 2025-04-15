@@ -81,15 +81,18 @@ data = {
     "userTimeZone": "Asia/Shanghai",
     "useUncited": True,
     "useLangXmlTag": True,
-    "useMarkdown": False
+    "useMarkdown": True
 }
 
 # 发送请求
 response = requests.post(url, headers=headers, cookies=cookies, json=data)
 
+print(response.text)
+
 # 按行分割响应文本
 lines = response.text.strip().split('\n')
 
+"""
 # 逐行解析 JSON
 for line in lines:
     try:
@@ -106,7 +109,8 @@ for line in lines:
                 print(result.get("path"))
                 print(result.get("score"))
 
-        if data.get("type") == "assistant_step" and data.get("namespace") == "chat":
+        if data.get("type") == "assistant_step" and (data.get("namespace") == "chat" or data.get("namespace") == "chat_markdown"):
             print(data.get("value"))
     except json.JSONDecodeError as e:
         print(f"无法解析行: {line}, 错误: {e}")
+"""
