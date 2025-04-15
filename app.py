@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import json
+import uuid # 导入 uuid 库
 
 # API URL (从 notionai.py 复制)
 url = "https://www.notion.so/api/v3/runAssistantV2"
@@ -20,12 +21,13 @@ cookies = {
 
 
 # 封装 Notion AI 请求逻辑
-def get_notion_ai_response(user_query: str):
+def get_notion_ai_response(user_query: str, session_id: str):
     """
     向 Notion AI API 发送请求并处理响应。
 
     Args:
         user_query: 用户输入的问题。
+        session_id: 当前会话的 ID。
 
     Returns:
         一个包含助手回复和搜索结果（如果有）的元组 (assistant_response, search_results_text)。
@@ -85,7 +87,7 @@ def get_notion_ai_response(user_query: str):
         ],
         "spaceId": "65492b2e-2341-40df-8dd9-40cdfd3314cf", # 替换为你自己的 spaceId
         "analytics": {
-            "sessionId": "390c811a-ac99-468f-8f35-e8c953d10bcd", # 使用 notionai.py 中的 sessionId
+            "sessionId": session_id,
             "assistantSurface": "fullPage",
             "openedFrom": "sidebar"
         },
@@ -146,20 +148,79 @@ def get_notion_ai_response(user_query: str):
 
 # Streamlit 应用界面
 st.title("Notion AI Streamlit 应用")
-user_input = st.text_area("请输入你的问题：")
 
+# --- Session State 初始化 ---
+# 检查 session_state 中是否已有 sessionId，如果没有则初始化
+if 'sessionId' not in st.session_state:
+    st.session_state.sessionId = str(uuid.uuid4())
+    # 改为初始化 interactions 列表
+    st.session_state.interactions = []
+
+# --- UI 元素 ---
+# "新会话" 按钮
+if st.button("✨ 新会话"):
+    st.session_state.sessionId = str(uuid.uuid4()) # 生成新的 sessionId
+    # 清空 interactions 列表
+    st.session_state.interactions = []
+    st.rerun() # 重新运行应用以应用更改并清空输入框
+
+# 显示当前 sessionId (可选，用于调试)
+# st.caption(f"当前 Session ID: {st.session_state.sessionId}")
+
+# 用户输入区域
+user_input = st.text_area("请输入你的问题：", key="user_input") # 使用 key 保证 reru 后内容清空
+
+# 发送按钮
 if st.button("发送请求"):
     if user_input:
+        # 准备当前交互的数据结构
+        current_interaction = {"user": user_input}
+
         with st.spinner("正在向 Notion AI 发送请求..."):
-            assistant_response, search_results = get_notion_ai_response(user_input)
+            # 使用当前 session_state 中的 sessionId 调用 API
+            assistant_response, search_results = get_notion_ai_response(user_input, st.session_state.sessionId)
 
         if assistant_response is not None:
-            st.subheader("AI 回复:")
-            st.markdown(assistant_response) # 使用 markdown 显示回复
+            # 将 AI 回复和搜索结果（如果有）添加到当前交互
+            current_interaction["assistant"] = assistant_response
+            if search_results:
+                 current_interaction["search_results"] = search_results
+            # 将完整的交互记录添加到列表中
+            st.session_state.interactions.append(current_interaction)
         else:
             st.error("未能获取 AI 回复。")
+            # 可以考虑也将错误信息记录到 interactions 中，或者单独处理
+            # 例如: st.session_state.interactions.append({"user": user_input, "error": "未能获取 AI 回复。"})
 
-        if search_results:
-            st.markdown(search_results)
+        # 清空输入框 (通过 rerun 实现)
+        st.rerun()
+
     else:
         st.warning("请输入问题！")
+
+# --- 显示聊天记录 ---
+if not st.session_state.interactions:
+    st.info("开始提问吧！")
+else:
+    # 反转 interactions 列表来实现由近到远排序
+    for interaction in reversed(st.session_state.interactions):
+        # 1. 显示用户消息
+        with st.chat_message("user"):
+            st.markdown(interaction["user"])
+
+        # 2. 显示 AI 回复 (如果存在)
+        if "assistant" in interaction:
+            with st.chat_message("assistant"):
+                st.markdown(interaction["assistant"])
+
+        # 3. 显示搜索结果 (如果存在)
+        if "search_results" in interaction:
+             # 使用 'assistant' 或自定义图标/角色显示搜索结果，保持连贯性
+             # 或者创建一个专门的角色/处理方式
+            with st.chat_message("assistant"): # 或者 st.chat_message("search") 如果你想用不同图标
+                 st.markdown(interaction["search_results"])
+
+        # 处理可能记录的错误信息
+        if "error" in interaction:
+             with st.chat_message("error"): # 使用 error 角色
+                 st.error(interaction["error"])
