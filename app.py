@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import json
 import uuid # 导入 uuid 库
+import pandas as pd # 导入 pandas 库
 
 # API URL (从 notionai.py 复制)
 url = "https://www.notion.so/api/v3/runAssistantV2"
@@ -51,7 +52,7 @@ def get_notion_ai_response(user_query: str, session_id: str):
                 "current-page-name": "",
                 "current-person-name": "ewili", # 可以考虑从环境变量或配置中读取
                 "current-space-name": "V40/2", # 可以考虑从环境变量或配置中读取
-                "current-person-id": "0" # 改回 "0"，以匹配原始 notionai.py 的工作配置
+                "current-person-id": "e63761a2-52de-4e41-af11-64e08edb8797" # 改回 "0"，以匹配原始 notionai.py 的工作配置
             },
             "loadedPageIds": [],
             "schemaIdMap": {},
@@ -76,7 +77,7 @@ def get_notion_ai_response(user_query: str, session_id: str):
                     "current-page-name": "",
                     "current-person-name": "ewili",
                     "current-space-name": "V40/2",
-                    "current-person-id": "0" # 改回 "0"，以匹配原始 notionai.py 的工作配置
+                    "current-person-id": "e63761a2-52de-4e41-af11-64e08edb8797" # 改回 "0"，以匹配原始 notionai.py 的工作配置
                 }
             },
             {
@@ -161,7 +162,7 @@ if st.button("✨ 新会话"):
     st.rerun() # 重新运行应用以应用更改并清空输入框
 
 # 显示当前 sessionId (可选，用于调试)
-# st.caption(f"当前 Session ID: {st.session_state.sessionId}")
+st.caption(f"当前 Session ID: {st.session_state.sessionId}")
 
 # 用户输入区域
 user_input = st.text_area("请输入你的问题：", key="user_input") # 使用 key 保证 reru 后内容清空
@@ -224,21 +225,45 @@ else:
                      grouped_results[path] = []
                  grouped_results[path].append(result)
 
-             # 在助手的消息框内显示分组后的搜索结果
-             with st.chat_message("assistant"):
-                 st.markdown("### 搜索结果：")
-                 if not grouped_results:
-                     st.markdown("没有找到相关的搜索结果。")
-                 else:
-                     # 遍历分组后的结果并使用 expander 显示
-                     for path, results_in_path in grouped_results.items():
-                         with st.expander(f"**路径:** {path} ({len(results_in_path)} 个结果)", expanded=False): # 默认不展开
-                             for result in results_in_path:
-                                 st.markdown(f"- **标题:** {result.get('title', 'N/A')}")
-                                 # 可以选择性显示 ID 和分数
-                                 # st.markdown(f"  - ID: {result.get('id', 'N/A')}")
-                                 st.markdown(f"  - **分数:** {result.get('score', 'N/A'):.4f}") # 格式化分数显示
-                                 st.markdown("---") # 添加分隔线
+             # 直接在主聊天区域显示搜索结果
+             st.markdown("### 🔍 搜索结果：") # 在标题前添加搜索图标
+             if not grouped_results:
+                 st.markdown("没有找到相关的搜索结果。")
+             else:
+                 # 遍历分组后的结果并使用 expander 显示
+                 for path, results_in_path in grouped_results.items():
+                     with st.expander(f" {path} ({len(results_in_path)} 个结果)", expanded=False): # 默认不展开
+                         # 准备数据
+                         table_data = []
+                         for result in results_in_path:
+                             title = result.get('title', 'N/A')
+                             score = result.get('score', 0) # Default to 0 if score is missing
+                             result_id = result.get('id')
+                             # 构造 Notion 页面链接 (移除 ID 中的 '-')
+                             url = f"https://www.notion.so/{result_id.replace('-', '')}" if result_id else None
+                             # 不需要预先格式化为 Markdown，直接存储
+                             table_data.append({"标题": title, "分数": score, "url": url})
+
+                         # 按分数降序排序
+                         sorted_table_data = sorted(table_data, key=lambda x: x.get('分数', 0), reverse=True)
+
+                         if sorted_table_data: # 确保有数据再创建 HTML 表格
+                             # 构建 HTML 表格字符串
+                             html_table = "<table><thead><tr><th>标题</th><th>分数</th></tr></thead><tbody>"
+                             for row in sorted_table_data:
+                                 title = row.get('标题', 'N/A')
+                                 score_str = f"{row.get('分数', 0):.4f}" # Format score
+                                 url = row.get('url')
+                                 # 如果有 URL，创建 <a> 标签，否则只显示标题
+                                 title_cell = f'<a href="{url}" target="_blank">{title}</a>' if url else title
+                                 html_table += f"<tr><td>{title_cell}</td><td>{score_str}</td></tr>"
+                             html_table += "</tbody></table>"
+
+                             # 使用 st.markdown 渲染 HTML 表格
+                             st.markdown(html_table, unsafe_allow_html=True)
+
+                         else:
+                             st.markdown("此路径下无有效结果可展示。") # Handle case where results_in_path might be empty or lack necessary data
 
 
         # 处理可能记录的错误信息
